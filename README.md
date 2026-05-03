@@ -60,10 +60,22 @@ Add an .env file within the server folder and set your database URL + USDA key.
 DATABASE_URL="postgresql://YOUR_USERNAME@localhost:5432/mealcare"
 JWT_SECRET="your-key"
 USDA_API_KEY="your_usda_api_key_here"
+GROQ_API_KEY="your_groq_api_key_here"
 ```
 We decided to use USDA FoodData Central as our external API for food search options due to being a government-verified and extremely detailed source while having US-focused food information. 
 
 **NOTE** : To get USDA API Key, please go to https://fdc.nal.usda.gov/api-key-signup
+
+Meal plan generation supports Groq by default and OpenAI as an optional provider.
+Existing Groq setups do not need to change. To use OpenAI instead, add:
+
+```
+OPENAI_API_KEY="your_openai_api_key_here"
+AI_PROVIDER="openai"
+OPENAI_MODEL="gpt-4o-mini"
+```
+
+If `AI_PROVIDER` is not set, the server uses `GROQ_API_KEY` first when present, then falls back to `OPENAI_API_KEY`.
 
 ###  Run Prisma Migration
 

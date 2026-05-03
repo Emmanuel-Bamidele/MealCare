@@ -11,9 +11,9 @@ export default function Layout({ onLogout }: LayoutProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[#eff5fb]">
-      <nav className="border-b border-slate-200 bg-white/95 shadow-sm backdrop-blur">
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5">
+    <div className="flex h-screen flex-col overflow-hidden bg-[#eef4f8]">
+      <nav className="border-b border-slate-200/80 bg-white/90 shadow-sm shadow-slate-200/60 backdrop-blur-xl">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
           <div className="flex items-center gap-2.5">
             <button
               onClick={() => setIsSidebarOpen((value) => !value)}
@@ -23,14 +23,21 @@ export default function Layout({ onLogout }: LayoutProps) {
             >
               {isSidebarOpen ? <X className="h-4.5 w-4.5" /> : <Menu className="h-4.5 w-4.5" />}
             </button>
-            <Heart className="h-6 w-6 text-[#1fba8c]" />
-            <h1 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
-              MealCare
-            </h1>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#176b9f] text-white shadow-sm">
+              <Heart className="h-5 w-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">
+                MealCare
+              </h1>
+              <p className="hidden text-xs text-slate-500 sm:block">
+                Nutrition planning workspace
+              </p>
+            </div>
           </div>
           <button
             onClick={onLogout}
-            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm text-slate-700 transition hover:bg-slate-100 sm:px-3"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 sm:px-3"
           >
             <LogOut className="h-4 w-4" />
             <span className="hidden sm:inline">Logout</span>

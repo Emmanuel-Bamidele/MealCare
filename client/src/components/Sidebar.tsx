@@ -14,8 +14,6 @@ const navItems = [
   { to: "/meals-to-avoid", label: "Meals to Avoid", icon: Ban },
   { to: "/profile", label: "Profile Settings", icon: Settings },
 ];
-// following figma diagram, none of these have routes as of now and quickly adding these for the purpose of demo.
-// !!! create page components and routes for above 
 
 type SidebarProps = {
   isMobileOpen?: boolean;
@@ -27,21 +25,21 @@ export default function Sidebar({
   onNavigate,
 }: SidebarProps) {
   const navContent = (
-    <nav className="space-y-1 px-4 py-5">
+    <nav className="space-y-1 px-3 py-4">
       {navItems.map(({ to, label, icon: Icon }) => (
         <NavLink
           key={to}
           to={to}
           onClick={onNavigate}
           className={({ isActive }) =>
-            `flex items-center gap-3 rounded-lg px-4 py-3 transition ${
+            `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
               isActive
-                ? "bg-[#1e86c8] text-white font-semibold shadow-sm"
-                : "text-slate-100 hover:bg-white/10"
+                ? "bg-white text-[#176b9f] shadow-sm"
+                : "text-sky-50/85 hover:bg-white/10 hover:text-white"
             }`
           }
         >
-          <Icon className="h-5 w-5" />
+          <Icon className="h-4.5 w-4.5" />
           <span>{label}</span>
         </NavLink>
       ))}
@@ -50,7 +48,7 @@ export default function Sidebar({
 
   return (
     <>
-      <aside className="hidden h-full w-60 shrink-0 bg-[#204f74] text-white shadow-xl lg:block">
+      <aside className="hidden h-full w-64 shrink-0 border-r border-slate-900/10 bg-[#174c72] text-white shadow-xl lg:block">
         {navContent}
       </aside>
 
@@ -63,13 +61,12 @@ export default function Sidebar({
         onClick={onNavigate}
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-[17rem] max-w-[82vw] bg-[#204f74] text-white shadow-2xl transition-transform duration-200 lg:hidden ${
+        className={`fixed inset-y-0 left-0 z-50 w-[17rem] max-w-[82vw] bg-[#174c72] text-white shadow-2xl transition-transform duration-200 lg:hidden ${
           isMobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="border-b border-white/10 px-4 py-4">
           <p className="text-lg font-semibold text-white">MealCare</p>
-          <p className="mt-1 text-xs text-sky-100/80">Navigate your meal dashboard</p>
         </div>
         {navContent}
       </aside>

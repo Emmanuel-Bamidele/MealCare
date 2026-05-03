@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ClipboardList, Link2, Plus, X } from "lucide-react";
+import { ClipboardList, Link2, Plus, Trash2, X } from "lucide-react";
 import MealHistoryList from "../components/MealHistoryList";
 import MealLogComposer from "../components/MealLogComposer";
 import {
@@ -23,6 +23,7 @@ import {
   toLocalDateKey,
   type DailyNutritionSummary,
   type MealLog,
+  type MealType,
   type NutritionProgressSummary,
 } from "../lib/meal-log";
 
@@ -57,6 +58,49 @@ type FhirContext = {
   conditions: string[];
   allergies: string[];
   providerSuggestions: string[];
+};
+
+type PlannedMealFood = {
+  id: string;
+  name: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+};
+
+type PlannedMealItem = {
+  id: string;
+  servings: number;
+  food: PlannedMealFood;
+};
+
+type PlannedMealSlot = {
+  items: PlannedMealItem[];
+  totals: {
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
+};
+
+type SavedMealPlanDay = {
+  day: string;
+  dayOfWeek: number;
+  meals: Record<Lowercase<MealType>, PlannedMealSlot>;
+};
+
+type SavedMealPlan = {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  days: SavedMealPlanDay[];
+};
+
+type CurrentMealPlanResponse = {
+  plan: SavedMealPlan | null;
 };
 
 type PatientSearchEntry = {
@@ -101,9 +145,41 @@ function formatValueList(values: string[], emptyValue: string): string {
   return values.length > 0 ? values.join(", ") : emptyValue;
 }
 
+function buildPlannedMealDescription(slot: PlannedMealSlot | undefined): string {
+  const names = slot?.items.map((item) => item.food.name) ?? [];
+
+  if (names.length === 0) {
+    return "No planned meal saved";
+  }
+
+  if (names.length <= 3) {
+    return names.join(", ");
+  }
+
+  return `${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+}
+
+function getPlanDayForDate(
+  plan: SavedMealPlan | null,
+  selectedDate: string,
+): SavedMealPlanDay | null {
+  if (!plan) return null;
+
+  const start = new Date(`${plan.startDate.slice(0, 10)}T00:00:00`);
+  const selected = new Date(`${selectedDate}T00:00:00`);
+  const diffDays = Math.round(
+    (selected.getTime() - start.getTime()) / (24 * 60 * 60 * 1000),
+  );
+
+  return plan.days.find((day) => day.dayOfWeek === diffDays) ?? null;
+}
+
 export default function Dashboard() {
   const [user, setUser] = useState<UserData | null>(null);
   const [mealLogs, setMealLogs] = useState<MealLog[]>([]);
+  const [currentMealPlan, setCurrentMealPlan] = useState<SavedMealPlan | null>(
+    null,
+  );
   const [dailySummary, setDailySummary] = useState<DailyNutritionSummary>(() =>
     createEmptySummary(toLocalDateKey(new Date())),
   );
@@ -118,8 +194,12 @@ export default function Dashboard() {
   const [patientResults, setPatientResults] = useState<PatientSearchEntry[]>(
     [],
   );
+  const [isLoadingPatients, setIsLoadingPatients] = useState(false);
+  const [patientLoadError, setPatientLoadError] = useState<string | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(true);
+  const [removingPlanSlot, setRemovingPlanSlot] = useState<string | null>(null);
   const [summaryView, setSummaryView] = useState<SummaryView>("today");
   const [trendDays, setTrendDays] = useState<7 | 30>(7);
   const [progressSummary, setProgressSummary] =
@@ -167,18 +247,23 @@ export default function Dashboard() {
       setDashboardError(null);
 
       try {
-        const [logs, summary] = await Promise.all([
+        const [logs, summary, planResponse] = await Promise.all([
           fetchMealLogs(selectedDate),
           fetchDailySummary(selectedDate),
+          api.get<CurrentMealPlanResponse>("/meal-plan/current", {
+            params: { date: selectedDate },
+          }),
         ]);
 
         if (!cancelled) {
           setMealLogs(logs);
           setDailySummary(summary);
+          setCurrentMealPlan(planResponse.data.plan);
         }
       } catch {
         if (!cancelled) {
           setMealLogs([]);
+          setCurrentMealPlan(null);
           setDailySummary(createEmptySummary(selectedDate));
           setDashboardError("Unable to load nutrition data right now.");
         }
@@ -235,13 +320,17 @@ export default function Dashboard() {
   }, [selectedDate, summaryView, trendDays]);
 
   const reloadSelectedDate = async () => {
-    const [logs, summary] = await Promise.all([
+    const [logs, summary, planResponse] = await Promise.all([
       fetchMealLogs(selectedDate),
       fetchDailySummary(selectedDate),
+      api.get<CurrentMealPlanResponse>("/meal-plan/current", {
+        params: { date: selectedDate },
+      }),
     ]);
 
     setMealLogs(logs);
     setDailySummary(summary);
+    setCurrentMealPlan(planResponse.data.plan);
   };
 
   // const reloadFhirContext = async () => {
@@ -250,11 +339,19 @@ export default function Dashboard() {
   // };
 
   const loadPatients = async () => {
+    setIsLoadingPatients(true);
+    setPatientLoadError(null);
+
     try {
       const response = await api.get<PatientSearchEntry[]>("/fhir/patients");
       setPatientResults(response.data);
     } catch {
       setPatientResults([]);
+      setPatientLoadError(
+        "Unable to load FHIR patients. Make sure the backend and FHIR server are running.",
+      );
+    } finally {
+      setIsLoadingPatients(false);
     }
   };
 
@@ -275,12 +372,30 @@ export default function Dashboard() {
     await reloadSelectedDate();
   };
 
+  const removePlannedMeal = async (mealType: MealType) => {
+    const slotKey = `${selectedDate}-${mealType}`;
+    setRemovingPlanSlot(slotKey);
+    setPlanError(null);
+
+    try {
+      await api.delete("/meal-plan/items", {
+        params: { date: selectedDate, mealType },
+      });
+      await reloadSelectedDate();
+    } catch {
+      setPlanError("Unable to remove that planned meal right now.");
+    } finally {
+      setRemovingPlanSlot(null);
+    }
+  };
+
   const openUtilityPanel = (tab: UtilityTab) => {
     setUtilityTab(tab);
     setIsUtilityPanelOpen(true);
   };
 
   const groupedMeals = groupByMealType(mealLogs);
+  const selectedPlanDay = getPlanDayForDate(currentMealPlan, selectedDate);
   const macroPercentages = calculateMacroPercentages(dailySummary.totals);
   const calorieProgress = Math.min(
     100,
@@ -298,11 +413,11 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="h-full bg-[radial-gradient(circle_at_top,#f9fcff_0%,#eef5fb_55%,#e7eff8_100%)]">
-      <div className="mx-auto max-w-[1500px] px-3 py-3 sm:px-4 sm:py-4 xl:px-5">
+    <div className="premium-page">
+      <div className="premium-shell">
         <div className="grid gap-3 xl:grid-cols-[0.82fr,1.38fr]">
-          <section className="rounded-xl border border-sky-100 bg-gradient-to-br from-white via-[#fbfdff] to-sky-50 p-4 shadow-sm shadow-sky-100/60">
-            <h2 className="text-[1.45rem] font-bold leading-tight text-slate-800 sm:text-[1.8rem]">
+          <section className="premium-panel">
+            <h2 className="premium-section-title">
               Your Information
             </h2>
             <div className="mt-4 space-y-2.5 text-sm text-slate-700">
@@ -385,7 +500,7 @@ export default function Dashboard() {
                       name="weight"
                       placeholder="Weight (lbs)"
                       required
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                      className="premium-input w-full"
                       onChange={(e) => {
                         const num = Number(e.target.value);
                         if (num < 0 || num > 700) {
@@ -398,7 +513,7 @@ export default function Dashboard() {
                       name="feet"
                       placeholder="Feet"
                       required
-                      className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                      className="premium-input w-24"
                       onChange={(e) => {
                         const num = Number(e.target.value);
                         if (num < 0 || num > 8) {
@@ -410,7 +525,7 @@ export default function Dashboard() {
                       type="number"
                       name="inches"
                       placeholder="In"
-                      className="w-20 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                      className="premium-input w-20"
                       onChange={(e) => {
                         const num = Number(e.target.value);
                         if (num < 0 || num > 11) {
@@ -426,7 +541,7 @@ export default function Dashboard() {
                   )}
                   <button
                     type="submit"
-                    className="mt-3 rounded-lg bg-amber-600 px-4 py-2 text-xs font-medium text-white hover:bg-amber-700 transition"
+                    className="mt-3 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700"
                   >
                     Save Measurements
                   </button>
@@ -474,7 +589,7 @@ export default function Dashboard() {
                   setShowLinkModal(true);
                   await loadPatients();
                 }}
-                className="inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-medium text-[#205278] transition hover:bg-sky-50"
+                className="premium-button-secondary px-3 py-2 text-xs"
                 type="button"
               >
                 <Link2 className="h-4 w-4" />
@@ -485,11 +600,11 @@ export default function Dashboard() {
             </div>
           </section>
 
-          <section className="rounded-xl border border-cyan-100 bg-gradient-to-br from-white via-[#faffff] to-cyan-50 p-4 shadow-sm shadow-cyan-100/70">
+          <section className="premium-panel">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-[1.45rem] font-bold leading-tight text-slate-800 sm:text-[1.8rem]">
+                  <h2 className="premium-section-title">
                     Today&apos;s Summary
                   </h2>
                   <div className="inline-flex rounded-full bg-sky-100 p-1 text-xs font-medium text-slate-600">
@@ -542,11 +657,11 @@ export default function Dashboard() {
                   type="date"
                   value={selectedDate}
                   onChange={(event) => setSelectedDate(event.target.value)}
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700"
+                  className="premium-input"
                 />
                 <button
                   onClick={() => openUtilityPanel("log")}
-                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[#1e86c8] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#166896]"
+                  className="premium-button-primary whitespace-nowrap px-3 py-2 text-xs"
                   type="button"
                 >
                   <Plus className="h-4 w-4" />
@@ -554,7 +669,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => openUtilityPanel("history")}
-                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-sky-200 bg-white px-3 py-2 text-xs font-medium text-[#205278] transition hover:bg-sky-50"
+                  className="premium-button-secondary whitespace-nowrap px-3 py-2 text-xs"
                   type="button"
                 >
                   <ClipboardList className="h-4 w-4" />
@@ -642,15 +757,15 @@ export default function Dashboard() {
           </section>
         </div>
 
-        <section className="mt-3 rounded-xl border border-sky-100 bg-white p-4 shadow-sm shadow-sky-100/60">
-          <h2 className="text-[1.45rem] font-bold leading-tight text-slate-800 sm:text-[1.8rem]">
+        <section className="premium-panel mt-3">
+          <h2 className="premium-section-title">
             Today&apos;s Meals
           </h2>
           <div className="mt-4 space-y-2.5 md:hidden">
             {MEAL_TYPES.map((currentMealType) => (
               <div
                 key={currentMealType}
-                className="rounded-lg border border-sky-100 bg-gradient-to-r from-white to-sky-50/40 px-3.5 py-3"
+              className="rounded-lg border border-slate-200 bg-slate-50/60 px-3.5 py-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -671,9 +786,9 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-          <div className="mt-4 hidden overflow-x-auto rounded-lg border border-sky-100 md:block">
-            <table className="w-full min-w-[38rem] border-collapse text-left text-sm">
-              <thead className="bg-gradient-to-r from-sky-50 to-cyan-50 text-slate-700">
+          <div className="mt-4 hidden overflow-x-auto rounded-lg border border-slate-200 md:block">
+            <table className="premium-table min-w-[38rem]">
+              <thead>
                 <tr>
                   <th className="px-4 py-2.5 font-semibold">Meals</th>
                   <th className="px-4 py-2.5 font-semibold">Description</th>
@@ -686,7 +801,7 @@ export default function Dashboard() {
                 {MEAL_TYPES.map((currentMealType) => (
                   <tr
                     key={currentMealType}
-                    className="border-t border-sky-50 odd:bg-white even:bg-sky-50/30"
+                    className="odd:bg-white even:bg-slate-50/50"
                   >
                     <td className="px-4 py-3 font-semibold text-[#204f74]">
                       {formatMealTypeLabel(currentMealType)}
@@ -707,10 +822,144 @@ export default function Dashboard() {
           </div>
         </section>
 
+        <section className="premium-panel mt-3">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="premium-section-title">
+                Planned Meals
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Saved plan items for {formatDateLabel(selectedDate)}
+              </p>
+            </div>
+            {currentMealPlan && (
+              <p className="text-xs font-medium text-emerald-600">
+                {currentMealPlan.name}
+              </p>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-2.5 md:hidden">
+            {MEAL_TYPES.map((currentMealType) => {
+              const slot =
+                selectedPlanDay?.meals[
+                  currentMealType.toLowerCase() as Lowercase<MealType>
+                ];
+              const hasPlannedItems = Boolean(slot?.items.length);
+              const isRemoving =
+                removingPlanSlot === `${selectedDate}-${currentMealType}`;
+
+              return (
+                <div
+                  key={currentMealType}
+                  className="rounded-lg border border-emerald-100 bg-emerald-50/40 px-3.5 py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-700">
+                        {formatMealTypeLabel(currentMealType)}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {buildPlannedMealDescription(slot)}
+                      </p>
+                    </div>
+                    <p className="whitespace-nowrap text-sm font-semibold text-emerald-500">
+                      {roundValue(slot?.totals.calories ?? 0)} kcal
+                    </p>
+                  </div>
+                  {hasPlannedItems && (
+                    <button
+                      type="button"
+                      onClick={() => removePlannedMeal(currentMealType)}
+                      disabled={isRemoving}
+                      className="premium-button-danger mt-3"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {isRemoving ? "Removing..." : "Remove"}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {planError && (
+            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {planError}
+            </div>
+          )}
+
+          <div className="mt-4 hidden overflow-x-auto rounded-lg border border-slate-200 md:block">
+            <table className="premium-table min-w-[42rem]">
+              <thead>
+                <tr>
+                  <th className="px-4 py-2.5 font-semibold">Meal</th>
+                  <th className="px-4 py-2.5 font-semibold">Planned Items</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">
+                    Calories
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-semibold">
+                    Macros
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-semibold">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {MEAL_TYPES.map((currentMealType) => {
+                  const slot =
+                    selectedPlanDay?.meals[
+                      currentMealType.toLowerCase() as Lowercase<MealType>
+                    ];
+                  const hasPlannedItems = Boolean(slot?.items.length);
+                  const isRemoving =
+                    removingPlanSlot === `${selectedDate}-${currentMealType}`;
+
+                  return (
+                    <tr
+                      key={currentMealType}
+                      className="odd:bg-white even:bg-slate-50/50"
+                    >
+                      <td className="px-4 py-3 font-semibold text-emerald-700">
+                        {formatMealTypeLabel(currentMealType)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700">
+                        {buildPlannedMealDescription(slot)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-emerald-500">
+                        {roundValue(slot?.totals.calories ?? 0)} kcal
+                      </td>
+                      <td className="px-4 py-3 text-right text-xs text-slate-500">
+                        P {roundValue(slot?.totals.protein ?? 0)}g / C{" "}
+                        {roundValue(slot?.totals.carbs ?? 0)}g / F{" "}
+                        {roundValue(slot?.totals.fat ?? 0)}g
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {hasPlannedItems && (
+                          <button
+                            type="button"
+                            onClick={() => removePlannedMeal(currentMealType)}
+                            disabled={isRemoving}
+                            className="premium-button-danger"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            {isRemoving ? "Removing..." : "Remove"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <div className="mt-3 grid gap-3 xl:grid-cols-[1fr,0.95fr]">
-          <section className="rounded-xl border border-sky-100 bg-gradient-to-br from-white via-[#fafdff] to-sky-50 p-4 shadow-sm shadow-sky-100/60">
+          <section className="premium-panel">
             <div className="flex items-center justify-between">
-              <h2 className="text-[1.45rem] font-bold leading-tight text-slate-800 sm:text-[1.8rem]">
+              <h2 className="premium-section-title">
                 {summaryView !== "today"
                   ? "Macronutrient Trends"
                   : macroView === "goals"
@@ -950,9 +1199,20 @@ export default function Dashboard() {
 
             <div className="mt-4 max-h-64 space-y-2 overflow-auto">
               {patientResults.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-4">
-                  Loading patients...
-                </p>
+                isLoadingPatients ? (
+                  <p className="text-sm text-slate-400 text-center py-4">
+                    Loading patients...
+                  </p>
+                ) : patientLoadError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-3 text-sm text-red-700">
+                    {patientLoadError}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                    No FHIR patients found. Load Synthea patients into HAPI FHIR
+                    or run the FHIR cache script, then try again.
+                  </div>
+                )
               ) : (
                 patientResults.map((entry) => {
                   const name = entry.resource.name?.[0];
@@ -974,6 +1234,8 @@ export default function Dashboard() {
               onClick={() => {
                 setShowLinkModal(false);
                 setPatientResults([]);
+                setPatientLoadError(null);
+                setIsLoadingPatients(false);
               }}
               className="mt-4 w-full text-slate-500"
               type="button"

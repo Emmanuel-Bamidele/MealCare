@@ -30,6 +30,17 @@ type AllergyBundle = {
   }>;
 };
 
+type PatientBundle = {
+  entry?: Array<{
+    resource?: {
+      id?: string;
+      name?: Array<{ given?: string[]; family?: string }>;
+      birthDate?: string;
+      gender?: string;
+    };
+  }>;
+};
+
 const router = new Hono<{ Variables: { userId: string } }>();
 const FHIR_BASE_URL = "http://localhost:8080/fhir";
 
@@ -48,6 +59,32 @@ router.get("/patients", async (c) => {
 
   try {
     const patients = await prisma.fhirPatient.findMany();
+
+    if (patients.length === 0) {
+      try {
+        const bundle = await fetchFhirJson<PatientBundle>(
+          "/Patient?_count=50&_format=json",
+        );
+
+        return c.json(
+          (bundle.entry || [])
+            .map((entry) => entry.resource)
+            .filter((patient): patient is NonNullable<typeof patient> =>
+              Boolean(patient?.id),
+            )
+            .map((patient) => ({
+              resource: {
+                id: patient.id,
+                name: patient.name,
+                birthDate: patient.birthDate,
+                gender: patient.gender,
+              },
+            })),
+        );
+      } catch (error) {
+        console.log("No cached patients and live FHIR patient lookup failed:", error);
+      }
+    }
 
     return c.json(
       patients.map((p) => ({
